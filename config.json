@@ -1,0 +1,56 @@
+{
+  "models_directory": "./models",
+  "deployments_directory": "./deployments",
+  "default_host": "127.0.0.1",
+  "starting_port": 8000,
+  "port_range": 1000,
+  "api_keys": {},
+  "models": {
+    "open_source": [
+      {
+        "name": "llama-3-8b",
+        "specs": {
+          "type": "open_source",
+          "source": "huggingface",
+          "model_id": "meta-llama/Meta-Llama-3-8B",
+          "framework": "auto",
+          "memory_requirements": {
+            "min_gb": 8,
+            "recommended_gb": 16
+          }
+        }
+      },
+      {
+        "name": "mistral-7b",
+        "specs": {
+          "type": "open_source",
+          "source": "huggingface",
+          "model_id": "mistralai/Mistral-7B-v0.1",
+          "framework": "llama.cpp",
+          "memory_requirements": {
+            "min_gb": 8,
+            "recommended_gb": 16
+          }
+        }
+      }
+    ],
+    "api": [
+      {
+        "name": "claude-3-opus",
+        "specs": {
+          "type": "api",
+          "api_endpoint": "https://api.anthropic.com/v1/messages",
+          "api_key_required": true
+        }
+      },
+      {
+        "name": "gpt-4",
+        "specs": {
+          "type": "api",
+          "api_endpoint": "https://api.openai.com/v1",
+          "api_key_required": true
+        }
+      }
+    ]
+  }
+}
