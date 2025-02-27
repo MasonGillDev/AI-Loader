@@ -1,0 +1,18 @@
+# Core dependencies
+psutil
+torch           # Or a specialized build of torch if you need GPU support (e.g., ROCm)
+requests
+tqdm
+huggingface_hub
+
+# llama-cpp-python plus server extras
+llama-cpp-python[server]
+
+# For the "transformers" text-generation-launcher
+text-generation-launcher
+
+# vLLM for "vllm" framework
+vllm
+
+# Flask is required by the local proxy servers for Claude/OpenAI
+flask

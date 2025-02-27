@@ -196,10 +196,11 @@ class ModelDownloader:
             
     def _verify_checksum(self, path: Path, expected_checksum: str) -> bool:
         """Verify the checksum of a downloaded model."""
-        # Implement checksum verification (e.g., SHA-256)
-        # For simplicity, we're just returning True for now
+        # Implement checksum verification (e.g., SHA-256) if needed.
+        # For now, we simply log that it's not implemented and return True.
         logger.info(f"Checksum verification for {path} skipped (not implemented)")
         return True
+
 
 class ModelDeployer:
     """Handles deploying models as local services or API clients."""
@@ -260,8 +261,8 @@ class ModelDeployer:
         return result
     
     def _deploy_local_model(self, model_name: str, model_specs: Dict, model_path: str, 
-                          port: int = 8000, host: str = "127.0.0.1", 
-                          quantization: Optional[str] = None) -> Dict:
+                            port: int = 8000, host: str = "127.0.0.1", 
+                            quantization: Optional[str] = None) -> Dict:
         """Deploy a local model as a service."""
         logger.info(f"Deploying local model {model_name} from {model_path}")
         
@@ -312,6 +313,7 @@ class ModelDeployer:
                     stdout=log,
                     stderr=err,
                     cwd=str(deployment_dir)
+                    
                 )
             
             # Store process info
@@ -348,8 +350,8 @@ class ModelDeployer:
             return result
     
     def _prepare_llamacpp_deployment(self, model_name: str, model_path: str, 
-                                  deployment_dir: Path, port: int, host: str, 
-                                  model_specs: Dict, quantization: Optional[str] = None) -> Tuple[str, str]:
+                                     deployment_dir: Path, port: int, host: str, 
+                                     model_specs: Dict, quantization: Optional[str] = None) -> Tuple[str, str]:
         """Prepare deployment for llama.cpp models."""
         # Check if model path is a directory and find the model file
         model_path_obj = Path(model_path)
@@ -372,7 +374,7 @@ class ModelDeployer:
             f"--ctx_len {ctx_len}",
             f"--host {host}",
             f"--port {port}",
-            "--n_gpu_layers -1"  # Use all available GPU layers
+            "--n_gpu_layers -1"  # Use all available GPU layers if possible
         ]
         
         # Add quantization if specified
@@ -410,10 +412,9 @@ class ModelDeployer:
         return cmd, interface
     
     def _prepare_transformers_deployment(self, model_name: str, model_path: str, 
-                                      deployment_dir: Path, port: int, host: str, 
-                                      model_specs: Dict) -> Tuple[str, str]:
-        """Prepare deployment for Transformers models."""
-        # Prepare command for text-generation-server
+                                         deployment_dir: Path, port: int, host: str, 
+                                         model_specs: Dict) -> Tuple[str, str]:
+        """Prepare deployment for Transformers models using text-generation-server."""
         cmd_parts = [
             "text-generation-launcher",
             f"--model-id {model_path}",
@@ -451,8 +452,8 @@ class ModelDeployer:
         return cmd, interface
     
     def _prepare_vllm_deployment(self, model_name: str, model_path: str, 
-                              deployment_dir: Path, port: int, host: str, 
-                              model_specs: Dict, quantization: Optional[str] = None) -> Tuple[str, str]:
+                                 deployment_dir: Path, port: int, host: str, 
+                                 model_specs: Dict, quantization: Optional[str] = None) -> Tuple[str, str]:
         """Prepare deployment for vLLM models."""
         # Prepare command
         cmd_parts = [
@@ -463,9 +464,11 @@ class ModelDeployer:
             "--trust-remote-code"
         ]
         
-        # Add tensor parallelism if multiple GPUs are available
-        if torch.cuda.device_count() > 1:
-            cmd_parts.append(f"--tensor-parallel-size {torch.cuda.device_count()}")
+        # Detect how many GPUs are available via torch
+        if torch.cuda.is_available():
+            gpu_count = torch.cuda.device_count()
+            if gpu_count > 1:
+                cmd_parts.append(f"--tensor-parallel-size {gpu_count}")
         
         # Add quantization if needed
         if quantization == "4-bit":
@@ -478,7 +481,7 @@ class ModelDeployer:
             "model": model_path,
             "port": port,
             "host": host,
-            "tensor_parallel_size": torch.cuda.device_count() if torch.cuda.device_count() > 1 else 1,
+            "tensor_parallel_size": torch.cuda.device_count() if torch.cuda.is_available() else 1,
             "quantization": quantization
         }
         
@@ -500,14 +503,13 @@ class ModelDeployer:
         return cmd, interface
     
     def _deploy_api_client(self, model_name: str, model_specs: Dict, api_key: Optional[str], 
-                         port: int = 8000, host: str = "127.0.0.1") -> Dict:
+                           port: int = 8000, host: str = "127.0.0.1") -> Dict:
         """Set up an API client for remote LLM services."""
         logger.info(f"Setting up API client for {model_name}")
         
         # Create deployment directory
         deployment_id = f"{model_name}-{int(time.time())}"
         deployment_dir = self.deployments_directory / deployment_id
-        print(f"Depoyment Directory{deployment_dir}")
         deployment_dir.mkdir(parents=True, exist_ok=True)
         
         result = {
@@ -564,7 +566,7 @@ class ModelDeployer:
                     shell=True,
                     stdout=log,
                     stderr=err,
-                    
+                    cwd=str(deployment_dir)
                 )
             
             # Store process info
@@ -602,7 +604,6 @@ class ModelDeployer:
     
     def _setup_claude_proxy(self, deployment_dir: Path, config: Dict, port: int, host: str) -> Tuple[str, str]:
         """Set up a local proxy for Claude API."""
-        # Create a simple Flask server to proxy requests to Claude
         proxy_file = deployment_dir / "claude_proxy.py"
         
         with open(proxy_file, "w") as f:
@@ -629,23 +630,21 @@ def chat_completions():
     if not api_key:
         return jsonify({"error": "API key not configured"}), 401
         
-    # Get request data
     data = request.json
     
-    # Prepare headers
     headers = {
         "x-api-key": api_key,
         "anthropic-version": "2023-06-01",
         "content-type": "application/json"
     }
     
-    # Transform request format from OpenAI to Claude if needed
+    # Transform to Claude's expected payload (simple pass-through in many cases)
     claude_data = {}
     if 'model' in data:
         claude_data['model'] = data['model'].replace('gpt', 'claude')
     else:
-        claude_data['model'] = 'claude-3-opus-20240229'
-        
+        claude_data['model'] = 'claude-1'  # Fallback or default
+    
     if 'messages' in data:
         claude_data['messages'] = data['messages']
         
@@ -657,14 +656,12 @@ def chat_completions():
     elif 'max_tokens_to_sample' in data:
         claude_data['max_tokens'] = data['max_tokens_to_sample']
     
-    # Forward the request to Claude API
     response = requests.post(
         config['api_endpoint'],
         headers=headers,
         json=claude_data
     )
     
-    # Return the response
     return response.json(), response.status_code
 
 @app.route('/health', methods=['GET'])
@@ -680,23 +677,20 @@ if __name__ == '__main__':
             f.write("#!/bin/bash\n")
             f.write("python claude_proxy.py")
         
-        # Make executable
         os.chmod(deployment_dir / "start_proxy.sh", 0o755)
         
         cmd = "./start_proxy.sh"
-
         interface = f"http://{host}:{port}/v1/chat/completions"
         
         return cmd, interface
     
     def _setup_openai_proxy(self, deployment_dir: Path, config: Dict, port: int, host: str) -> Tuple[str, str]:
         """Set up a local proxy for OpenAI API."""
-        # Create a simple Flask server to proxy requests to OpenAI
         proxy_file = deployment_dir / "openai_proxy.py"
         
         with open(proxy_file, "w") as f:
             f.write("""
-from flask import Flask, request, jsonify, Response
+from flask import Flask, request, jsonify
 import requests
 import os
 import json
@@ -713,21 +707,18 @@ if 'api_key_file' in config:
     with open(config['api_key_file'], 'r') as f:
         api_key = f.read().strip()
 
-@app.route('/v1/<path:subpath>', methods=['GET', 'POST', 'PUT', 'DELETE'])
+@app.route('/v1/<path:subpath>', methods=['GET','POST','PUT','DELETE'])
 def proxy(subpath):
     if not api_key:
         return jsonify({"error": "API key not configured"}), 401
     
-    # Forward the request to OpenAI API
     url = f"{config['api_endpoint'].rstrip('/')}/{subpath}"
     
-    # Prepare headers
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": request.headers.get("Content-Type", "application/json")
     }
     
-    # Forward the request with the appropriate method
     if request.method == 'GET':
         response = requests.get(url, headers=headers, params=request.args)
     elif request.method == 'POST':
@@ -739,7 +730,6 @@ def proxy(subpath):
     else:
         return jsonify({"error": "Method not supported"}), 405
     
-    # Return the response
     return response.json(), response.status_code
 
 @app.route('/health', methods=['GET'])
@@ -755,7 +745,6 @@ if __name__ == '__main__':
             f.write("#!/bin/bash\n")
             f.write("python openai_proxy.py")
         
-        # Make executable
         os.chmod(deployment_dir / "start_proxy.sh", 0o755)
         
         cmd = "./start_proxy.sh"
@@ -793,7 +782,6 @@ if __name__ == '__main__':
                 logger.warning(f"Process {process.pid} did not terminate gracefully, sending SIGKILL")
                 process.kill()
             
-            # Update deployment status
             self.running_deployments[deployment_id]["status"] = "stopped"
             self.running_deployments[deployment_id]["stopped_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
             
@@ -812,7 +800,6 @@ if __name__ == '__main__':
         deployments = []
         
         for deployment_id, info in self.running_deployments.items():
-            # Check if process is still running
             process = info["process"]
             status = "running" if process.poll() is None else "stopped"
             
@@ -839,11 +826,8 @@ if __name__ == '__main__':
             return {"status": "not_found", "error": f"Deployment {deployment_id} not found"}
         
         info = self.running_deployments[deployment_id].copy()
+        process = info.pop("process")  # Remove the actual process object
         
-        # Remove process object (not serializable)
-        process = info.pop("process")
-        
-        # Check if process is still running
         info["status"] = "running" if process.poll() is None else "stopped"
         info["process_id"] = process.pid
         
@@ -885,10 +869,8 @@ if __name__ == '__main__':
             if not deployment_dir.exists():
                 raise Exception(f"Deployment directory {deployment_dir} not found")
             
-            # Start the deployment using the same command
             cmd = deployment_info["cmd"]
             
-            # Create log files
             log_file = deployment_dir / "deployment.log"
             err_file = deployment_dir / "deployment.err"
             
@@ -904,17 +886,13 @@ if __name__ == '__main__':
                     cwd=str(deployment_dir)
                 )
             
-            # Update process info
             self.running_deployments[deployment_id]["process"] = process
             self.running_deployments[deployment_id]["started_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
             self.running_deployments[deployment_id].pop("stopped_at", None)
             
-            # Wait for server to start
             time.sleep(5)
             
-            # Check if process is still running
             if process.poll() is not None:
-                # Process terminated
                 with open(err_file, "r") as f:
                     error_log = f.read()
                 raise Exception(f"Server process terminated unexpectedly. Exit code: {process.returncode}. Error: {error_log}")
@@ -939,7 +917,7 @@ class HardwareManager:
         self.gpu_info = self._get_gpu_info()
         
     def _get_system_info(self) -> Dict:
-        """Get system hardware information."""
+        """Get basic system hardware information."""
         info = {
             "cpu": {
                 "cores": psutil.cpu_count(logical=False),
@@ -952,45 +930,42 @@ class HardwareManager:
             "os": platform.system(),
             "python_version": platform.python_version()
         }
-        
         return info
     
     def _get_gpu_info(self) -> List[Dict]:
-        """Get GPU information if available."""
+        """Get GPU information (NVIDIA, AMD via ROCm, or Apple MPS) if available through PyTorch."""
         gpus = []
         
-        try:
-            if platform.system() == "Windows":
-                # Use nvidia-smi on Windows
-                output = subprocess.check_output(["nvidia-smi", "--query-gpu=name,memory.total,memory.free,driver_version", "--format=csv,noheader,nounits"]).decode()
-                for line in output.strip().split("\n"):
-                    parts = line.split(", ")
-                    if len(parts) >= 4:
-                        gpus.append({
-                            "name": parts[0],
-                            "memory_total_gb": float(parts[1]) / 1024,
-                            "memory_free_gb": float(parts[2]) / 1024,
-                            "driver_version": parts[3]
-                        })
-            else:
-                # Try to use torch to detect GPUs
-                if torch.cuda.is_available():
-                    for i in range(torch.cuda.device_count()):
-                        gpu_name = torch.cuda.get_device_name(i)
-                        # Get memory information
-                        memory_total = torch.cuda.get_device_properties(i).total_memory / (1024 ** 3)  # GB
-                        memory_reserved = torch.cuda.memory_reserved(i) / (1024 ** 3)  # GB
-                        memory_allocated = torch.cuda.memory_allocated(i) / (1024 ** 3)  # GB
-                        memory_free = memory_total - memory_reserved
-                        
-                        gpus.append({
-                            "name": gpu_name,
-                            "memory_total_gb": memory_total,
-                            "memory_free_gb": memory_free,
-                            "memory_allocated_gb": memory_allocated
-                        })
-        except Exception as e:
-            logger.warning(f"Failed to get GPU info: {str(e)}")
+        # 1) Check for MPS (Apple Silicon)
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            # On Apple Silicon with MPS support, you won't get full memory details via PyTorch
+            gpus.append({
+                "name": "Apple MPS Device",
+                "memory_total_gb": None,
+                "memory_free_gb": None,
+                "memory_allocated_gb": None
+            })
+            return gpus
+        
+        # 2) Check for CUDA or ROCm
+        if torch.cuda.is_available():
+            num_devices = torch.cuda.device_count()
+            for i in range(num_devices):
+                gpu_name = torch.cuda.get_device_name(i)
+                props = torch.cuda.get_device_properties(i)
+                
+                # This should work for both NVIDIA (CUDA) and AMD (ROCm) builds:
+                total_mem = props.total_memory / (1024 ** 3)
+                allocated_mem = torch.cuda.memory_allocated(i) / (1024 ** 3)
+                reserved_mem = torch.cuda.memory_reserved(i) / (1024 ** 3)
+                free_mem = total_mem - reserved_mem
+                
+                gpus.append({
+                    "name": gpu_name,
+                    "memory_total_gb": total_mem,
+                    "memory_free_gb": free_mem,
+                    "memory_allocated_gb": allocated_mem
+                })
         
         return gpus
     
@@ -1003,55 +978,55 @@ class HardwareManager:
             "tensor_parallel": 1
         }
         
-        # Get memory requirements
+        # Get memory requirements from the model specs
         model_memory_req = model_specs.get("memory_requirements", {})
         min_memory = model_memory_req.get("min_gb", 8)  # Minimum memory required in GB
         recommended_memory = model_memory_req.get("recommended_gb", 16)  # Recommended memory in GB
         
-        # Check GPU availability
         if self.gpu_info:
-            total_gpu_memory = sum(gpu["memory_total_gb"] for gpu in self.gpu_info)
-            free_gpu_memory = sum(gpu["memory_free_gb"] for gpu in self.gpu_info)
+            # Sum up GPU memory
+            total_gpu_memory = sum(g["memory_total_gb"] for g in self.gpu_info if g["memory_total_gb"] is not None)
+            free_gpu_memory = sum(g["memory_free_gb"] for g in self.gpu_info if g["memory_free_gb"] is not None)
             num_gpus = len(self.gpu_info)
             
-            logger.info(f"Available GPU memory: {free_gpu_memory:.2f} GB across {num_gpus} GPUs")
+            logger.info(f"Detected {num_gpus} GPU(s). Total GPU memory: ~{total_gpu_memory:.2f} GB, Free GPU memory: ~{free_gpu_memory:.2f} GB")
             
-            # Can run without quantization
+            # If we have enough free GPU memory for recommended usage
             if free_gpu_memory >= recommended_memory:
                 recommendation["can_run"] = True
                 recommendation["quantization"] = None
-                recommendation["tensor_parallel"] = min(num_gpus, 2)  # Use up to 2 GPUs by default
+                recommendation["tensor_parallel"] = min(num_gpus, 2)
                 
-                # Choose framework
+                # Auto-select a good framework if not specified
                 if model_specs.get("framework") == "auto":
-                    if free_gpu_memory > recommended_memory * 1.5:
-                        recommendation["framework"] = "vllm"  # More memory efficient for inference
+                    # vLLM can be more memory efficient, but llama.cpp can be simpler
+                    # You can decide your own logic; here's a simple heuristic:
+                    if free_gpu_memory >= recommended_memory * 1.5:
+                        recommendation["framework"] = "vllm"
                     else:
-                        recommendation["framework"] = "llama.cpp"  # Good balance of speed and memory usage
+                        recommendation["framework"] = "llama.cpp"
                 else:
                     recommendation["framework"] = model_specs.get("framework", "llama.cpp")
             
-            # Can run with 8-bit quantization
+            # Try 8-bit quant if not enough memory
             elif free_gpu_memory >= min_memory:
                 recommendation["can_run"] = True
                 recommendation["quantization"] = "8-bit"
-                recommendation["tensor_parallel"] = min(num_gpus, 2)
-                recommendation["framework"] = "llama.cpp"  # Best quantization support
+                recommendation["framework"] = model_specs.get("framework", "llama.cpp")
             
-            # Can run with 4-bit quantization
+            # Try 4-bit quant if that's still too large
             elif free_gpu_memory >= min_memory * 0.5:
                 recommendation["can_run"] = True
                 recommendation["quantization"] = "4-bit"
-                recommendation["tensor_parallel"] = 1
-                recommendation["framework"] = "llama.cpp"
+                recommendation["framework"] = model_specs.get("framework", "llama.cpp")
             
-            # Not enough GPU memory, check CPU
             else:
-                logger.warning(f"Insufficient GPU memory. Checking CPU capabilities.")
+                # Not enough GPU memory, fallback to CPU check
+                logger.warning("Insufficient GPU memory detected, checking CPU memory.")
                 return self._check_cpu_capabilities(model_specs, min_memory, recommended_memory)
+            print(model_specs)
         else:
-            # No GPUs found, check CPU
-            logger.info("No GPUs found. Checking CPU capabilities.")
+            logger.info("No GPU detected, using CPU fallback.")
             return self._check_cpu_capabilities(model_specs, min_memory, recommended_memory)
         
         return recommendation
@@ -1068,42 +1043,37 @@ class HardwareManager:
         available_memory = self.system_info["memory"]["available"]
         logger.info(f"Available CPU memory: {available_memory:.2f} GB")
         
-        # Can run without quantization
         if available_memory >= recommended_memory:
             recommendation["can_run"] = True
             recommendation["quantization"] = None
-            recommendation["framework"] = "llama.cpp"  # Best for CPU
-        
-        # Can run with 8-bit quantization
+            recommendation["framework"] = "llama.cpp"
         elif available_memory >= min_memory:
             recommendation["can_run"] = True
             recommendation["quantization"] = "8-bit"
             recommendation["framework"] = "llama.cpp"
-        
-        # Can run with 4-bit quantization
         elif available_memory >= min_memory * 0.5:
             recommendation["can_run"] = True
             recommendation["quantization"] = "4-bit"
             recommendation["framework"] = "llama.cpp"
-        
-        # Not enough memory
         else:
             recommendation["can_run"] = False
-            recommendation["error"] = f"Insufficient memory. Model requires {min_memory} GB but only {available_memory:.2f} GB available."
+            recommendation["error"] = (
+                f"Insufficient memory. Model requires ~{min_memory} GB but only "
+                f"{available_memory:.2f} GB is available."
+            )
         
         return recommendation
     
     def get_optimal_batch_size(self, model_specs: Dict, deployment_config: Dict) -> int:
-        """Determine optimal batch size based on hardware and model."""
-        if deployment_config.get("quantization") is not None:
-            # Conservative batch size for quantized models
-            return 4
+        """Determine an approximate batch size based on hardware and model."""
+        if deployment_config.get("quantization"):
+            return 4  # more conservative for quantized models
         
         if self.gpu_info:
-            # Higher batch size for GPUs
-            return 16 if len(self.gpu_info) > 1 else 8
+            # Higher batch size for GPU
+            return 8
         else:
-            # Lower batch size for CPU
+            # CPU fallback
             return 1
     
     def get_system_status(self) -> Dict:
@@ -1122,10 +1092,8 @@ class HardwareManager:
             }
         }
         
-        # Add GPU status if available
-        if self.gpu_info:
-            status["gpu"] = self._get_gpu_info()  # Refresh GPU info
-        
+        # Refresh GPU info (in case of dynamic changes)
+        status["gpu"] = self._get_gpu_info()
         return status
 
 
@@ -1162,31 +1130,109 @@ class DeploymentManager:
             "models": {
                 "open_source": [
                     {
-                        "name": "llama-3-8b",
-                        "specs": {
-                            "type": "open_source",
-                            "source": "huggingface",
-                            "model_id": "meta-llama/Meta-Llama-3-8B",
-                            "framework": "auto",
-                            "memory_requirements": {
-                                "min_gb": 8,
-                                "recommended_gb": 16
-                            }
-                        }
-                    },
-                    {
-                        "name": "mistral-7b",
-                        "specs": {
-                            "type": "open_source",
-                            "source": "huggingface",
-                            "model_id": "mistralai/Mistral-7B-v0.1",
-                            "framework": "llama.cpp",
-                            "memory_requirements": {
-                                "min_gb": 8,
-                                "recommended_gb": 16
-                            }
-                        }
-                    }
+        "name": "llama-3-8b",
+        "specs": {
+          "type": "open_source",
+          "source": "huggingface",
+          "model_id": "meta-llama/Meta-Llama-3-8B",
+          "framework": "auto",
+          "memory_requirements": {
+            "min_gb": 8,
+            "recommended_gb": 16
+          }
+        }
+      },
+      {
+        "name": "mistral-7b",
+        "specs": {
+          "type": "open_source",
+          "source": "huggingface",
+          "model_id": "mistralai/Mistral-7B-v0.1",
+          "framework": "llama.cpp",
+          "memory_requirements": {
+            "min_gb": 8,
+            "recommended_gb": 16
+          }
+        }
+      },
+      {
+        "name": "tiny-llama-1.1b",
+        "specs": {
+          "type": "open_source",
+          "source": "huggingface",
+          "model_id": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+          "framework": "llama.cpp",
+          "memory_requirements": {
+            "min_gb": 2,
+            "recommended_gb": 4
+          }
+        }
+      },
+      {
+        "name": "phi-2",
+        "specs": {
+          "type": "open_source",
+          "source": "huggingface",
+          "model_id": "microsoft/phi-2",
+          "framework": "transformers",
+          "memory_requirements": {
+            "min_gb": 3,
+            "recommended_gb": 6
+          }
+        }
+      },
+      {
+        "name": "gemma-2b",
+        "specs": {
+          "type": "open_source",
+          "source": "huggingface",
+          "model_id": "google/gemma-2b",
+          "framework": "transformers",
+          "memory_requirements": {
+            "min_gb": 2,
+            "recommended_gb": 4
+          }
+        }
+      },
+      {
+        "name": "stablelm-zephyr-3b",
+        "specs": {
+          "type": "open_source",
+          "source": "huggingface",
+          "model_id": "stabilityai/stablelm-zephyr-3b",
+          "framework": "transformers",
+          "memory_requirements": {
+            "min_gb": 3,
+            "recommended_gb": 6
+          }
+        }
+      },
+      {
+        "name": "bloom-560m",
+        "specs": {
+          "type": "open_source",
+          "source": "huggingface",
+          "model_id": "bigscience/bloom-560m",
+          "framework": "transformers",
+          "memory_requirements": {
+            "min_gb": 1,
+            "recommended_gb": 2
+          }
+        }
+      },
+      {
+        "name": "distilgpt2",
+        "specs": {
+          "type": "open_source",
+          "source": "huggingface",
+          "model_id": "distilgpt2",
+          "framework": "transformers",
+          "memory_requirements": {
+            "min_gb": 1,
+            "recommended_gb": 2
+          }
+        }
+      }
                 ],
                 "api": [
                     {
@@ -1196,20 +1242,11 @@ class DeploymentManager:
                             "api_endpoint": "https://api.anthropic.com/v1/messages",
                             "api_key_required": True
                         }
-                    },
-                    {
-                        "name": "gpt-4",
-                        "specs": {
-                            "type": "api",
-                            "api_endpoint": "https://api.openai.com/v1",
-                            "api_key_required": True
-                        }
                     }
                 ]
             }
         }
         
-        # Save default config
         with open(self.config_file, 'w') as f:
             json.dump(default_config, f, indent=2)
         
@@ -1231,71 +1268,58 @@ class DeploymentManager:
         start_port = self.config.get("starting_port", 8000)
         port_range = self.config.get("port_range", 1000)
         
-        # Get ports used by current deployments
         used_ports = {d["port"] for d in self.model_deployer.list_deployments()}
-        
-        # Find the first available port
         for port in range(start_port, start_port + port_range):
             if port not in used_ports:
                 return port
-                
         raise RuntimeError(f"No available ports found in range {start_port}-{start_port+port_range}")
     
     def list_available_models(self) -> Dict:
-        """List all available models from configuration."""
+        """List all available models from configuration, with hardware recommendations."""
         result = {
             "open_source": self.config.get("models", {}).get("open_source", []),
             "api": self.config.get("models", {}).get("api", [])
         }
         
-        # Include hardware recommendations for open source models
         for model in result["open_source"]:
             model["hardware_recommendation"] = self.hardware_manager.recommend_model_config(model["specs"])
         
         return result
     
     def deploy_model(self, model_name: str, host: Optional[str] = None, port: Optional[int] = None) -> Dict:
-        """Deploy a model by name."""
-        # Find the model in our config
+        """Deploy a model by name from the config."""
+        # Search in open_source
         model_info = None
-        
-        for model in self.config.get("models", {}).get("open_source", []):
-            if model["name"] == model_name:
-                model_info = model
+        for m in self.config.get("models", {}).get("open_source", []):
+            if m["name"] == model_name:
+                model_info = m
                 break
-                
-        if model_info is None:
-            for model in self.config.get("models", {}).get("api", []):
-                if model["name"] == model_name:
-                    model_info = model
+        
+        # Or search in API
+        if not model_info:
+            for m in self.config.get("models", {}).get("api", []):
+                if m["name"] == model_name:
+                    model_info = m
                     break
         
-        if model_info is None:
-            return {"status": "error", "error": f"Model {model_name} not found in configuration"}
+        if not model_info:
+            return {"status": "error", "error": f"Model {model_name} not found in config"}
         
-        # Get deployment settings
         if host is None:
             host = self.config.get("default_host", "127.0.0.1")
-            
         if port is None:
             port = self.get_available_port()
         
-        # Get hardware recommendations for open source models
+        # If open_source, apply hardware recommendations
         if model_info["specs"]["type"] == "open_source":
             recommendation = self.hardware_manager.recommend_model_config(model_info["specs"])
-            
             if not recommendation["can_run"]:
-                return {
-                    "status": "error", 
-                    "error": f"Hardware insufficient to run model {model_name}. {recommendation.get('error', '')}"
-                }
+                return {"status": "error", "error": f"Hardware insufficient. {recommendation.get('error', '')}"}
             
-            # Apply recommendation
             model_info["quantization"] = recommendation["quantization"]
             if recommendation.get("framework"):
                 model_info["specs"]["framework"] = recommendation["framework"]
         
-        # Deploy the model
         api_keys = self.config.get("api_keys", {})
         result = self.model_deployer.deploy_model(
             model_info=model_info,
@@ -1309,38 +1333,32 @@ class DeploymentManager:
     def stop_all_deployments(self) -> Dict:
         """Stop all running deployments."""
         results = {}
-        
-        for deployment in self.model_deployer.list_deployments():
-            deployment_id = deployment["deployment_id"]
-            results[deployment_id] = self.model_deployer.stop_deployment(deployment_id)
-        
+        for dep in self.model_deployer.list_deployments():
+            dep_id = dep["deployment_id"]
+            results[dep_id] = self.model_deployer.stop_deployment(dep_id)
         return results
     
     def start_monitoring(self, interval: int = 60) -> None:
-        """Start a background thread to monitor deployments and system resources."""
+        """Start background monitoring of system & deployments."""
         def monitor_loop():
             while not self.shutdown_event.is_set():
                 try:
-                    # Get system status
                     system_status = self.hardware_manager.get_system_status()
-                    
-                    # Check deployments
                     deployments = self.model_deployer.list_deployments()
-                    for deployment in deployments:
-                        if deployment["status"] != "running":
-                            logger.warning(f"Deployment {deployment['deployment_id']} is not running. Status: {deployment['status']}")
                     
-                    # Log resource usage
-                    logger.info(f"System status: CPU: {system_status['memory_usage']['percent']}%, "
-                                f"Memory: {system_status['memory_usage']['used_gb']:.2f}/{system_status['memory_usage']['total_gb']:.2f} GB")
-                
+                    for d in deployments:
+                        if d["status"] != "running":
+                            logger.warning(f"Deployment {d['deployment_id']} is not running. Status: {d['status']}")
+                    
+                    mem_used = system_status["memory_usage"]["used_gb"]
+                    mem_total = system_status["memory_usage"]["total_gb"]
+                    logger.info(f"System: CPU Usage={system_status['cpu_usage']}, "
+                                f"Memory Used={mem_used:.2f} GB / {mem_total:.2f} GB")
                 except Exception as e:
                     logger.error(f"Error in monitoring thread: {str(e)}")
                 
-                # Wait for next check
                 self.shutdown_event.wait(interval)
         
-        # Start monitoring thread
         monitor_thread = threading.Thread(target=monitor_loop, daemon=True)
         monitor_thread.start()
         logger.info("System monitoring started")
@@ -1351,102 +1369,93 @@ class DeploymentManager:
         logger.info("System monitoring stopped")
 
 
-# CLI interface for the deployment manager
+# Simple CLI for demonstration/testing
 def main():
     import argparse
     
     parser = argparse.ArgumentParser(description="LLM Deployment Manager CLI")
     subparsers = parser.add_subparsers(dest="command", help="Command to execute")
     
-    # List command
-    list_parser = subparsers.add_parser("list", help="List available models or deployments")
-    list_parser.add_argument("--type", choices=["models", "deployments"], required=True, help="What to list")
+    # list
+    list_parser = subparsers.add_parser("list", help="List models or deployments")
+    list_parser.add_argument("--type", choices=["models", "deployments"], required=True)
     
-    # Deploy command
-    deploy_parser = subparsers.add_parser("deploy", help="Deploy a model")
-    deploy_parser.add_argument("--model", required=True, help="Name of the model to deploy")
-    deploy_parser.add_argument("--host", help="Host to bind to")
-    deploy_parser.add_argument("--port", type=int, help="Port to use")
+    # deploy
+    deploy_parser = subparsers.add_parser("deploy", help="Deploy a model from config")
+    deploy_parser.add_argument("--model", required=True)
+    deploy_parser.add_argument("--host", default=None)
+    deploy_parser.add_argument("--port", type=int, default=None)
     
-    # Stop command
+    # stop
     stop_parser = subparsers.add_parser("stop", help="Stop a deployment")
-    stop_parser.add_argument("--id", required=True, help="Deployment ID to stop")
+    stop_parser.add_argument("--id", required=True)
     
-    # Add API key command
+    # add-key
     key_parser = subparsers.add_parser("add-key", help="Add or update an API key")
-    key_parser.add_argument("--provider", required=True, help="API provider (e.g., openai, anthropic)")
-    key_parser.add_argument("--key", required=True, help="API key")
+    key_parser.add_argument("--provider", required=True)
+    key_parser.add_argument("--key", required=True)
     
-    # System info command
-    subparsers.add_parser("system-info", help="Display system hardware information")
+    # system-info
+    subparsers.add_parser("system-info", help="Show hardware info")
     
     args = parser.parse_args()
     
-    # Initialize deployment manager
     manager = DeploymentManager()
     
     if args.command == "list":
         if args.type == "models":
             models = manager.list_available_models()
-            print("Available Models:")
-            print("\nOpen Source Models:")
-            for model in models["open_source"]:
-                rec = model.get("hardware_recommendation", {})
-                can_run = "✅" if rec.get("can_run", False) else "❌"
-                print(f"  {can_run} {model['name']} - Source: {model['specs'].get('source', '')}")
-                if rec.get("can_run", False):
-                    quant = rec.get("quantization", "None")
-                    framework = rec.get("framework", "auto")
-                    print(f"      Recommended: Quantization: {quant}, Framework: {framework}")
-                
+            print("Open Source Models:")
+            for m in models["open_source"]:
+                print(f"  - {m['name']}")
+                hr = m.get("hardware_recommendation", {})
+                can_run = "Yes" if hr.get("can_run") else "No"
+                print(f"     Can run? {can_run}, recommended quant: {hr.get('quantization')}, framework: {hr.get('framework')}")
             print("\nAPI Models:")
-            for model in models["api"]:
-                print(f"  {model['name']} - API: {model['specs'].get('api_endpoint', '')}")
+            for m in models["api"]:
+                print(f"  - {m['name']} (endpoint: {m['specs'].get('api_endpoint')})")
         
         elif args.type == "deployments":
-            deployments = manager.model_deployer.list_deployments()
-            print("Running Deployments:")
-            for d in deployments:
-                status_icon = "✅" if d["status"] == "running" else "❌"
-                print(f"  {status_icon} {d['model']} - ID: {d['deployment_id']}, Host: {d['host']}, Port: {d['port']}")
+            deps = manager.model_deployer.list_deployments()
+            if not deps:
+                print("No active deployments.")
+            else:
+                for d in deps:
+                    print(f"{d['deployment_id']}: {d['model']} at {d['host']}:{d['port']} - {d['status']}")
     
     elif args.command == "deploy":
-        result = manager.deploy_model(args.model, args.host, args.port)
+        result = manager.deploy_model(model_name=args.model, host=args.host, port=args.port)
         if result.get("status") in ["deployed", "configured"]:
-            print(f"✅ Model {args.model} deployed successfully")
-            print(f"  Deployment ID: {result.get('deployment_id')}")
-            print(f"  Interface: {result.get('interface')}")
+            print(f"Deployment succeeded! ID: {result['deployment_id']}")
+            print(f"Interface URL: {result.get('interface')}")
         else:
-            print(f"❌ Failed to deploy model: {result.get('error', 'Unknown error')}")
+            print(f"Deployment failed: {result.get('error')}")
     
     elif args.command == "stop":
-        result = manager.model_deployer.stop_deployment(args.id)
-        if result["status"] == "stopped":
-            print(f"✅ Deployment {args.id} stopped successfully")
+        r = manager.model_deployer.stop_deployment(args.id)
+        if r["status"] == "stopped":
+            print(f"Deployment {args.id} stopped.")
         else:
-            print(f"❌ Failed to stop deployment: {result.get('error', 'Unknown error')}")
+            print(f"Failed to stop deployment: {r.get('error')}")
     
     elif args.command == "add-key":
         manager.add_api_key(args.provider, args.key)
-        print(f"✅ API key for {args.provider} added successfully")
+        print(f"API key for {args.provider} set.")
     
     elif args.command == "system-info":
         info = manager.hardware_manager.system_info
-        gpus = manager.hardware_manager.gpu_info
-        
-        print("System Information:")
+        print("System Info:")
         print(f"  OS: {info['os']}")
-        print(f"  CPU: {info['cpu']['cores']} cores, {info['cpu']['threads']} threads")
+        print(f"  CPU Cores: {info['cpu']['cores']}, Threads: {info['cpu']['threads']}")
         print(f"  Memory: {info['memory']['total']:.2f} GB total, {info['memory']['available']:.2f} GB available")
-        
-        if gpus:
-            print("\nGPUs:")
-            for i, gpu in enumerate(gpus):
-                print(f"  GPU {i+1}: {gpu['name']}")
-                print(f"    Memory: {gpu['memory_total_gb']:.2f} GB total, {gpu['memory_free_gb']:.2f} GB free")
+        if manager.hardware_manager.gpu_info:
+            print("\nDetected GPUs:")
+            for i, gpu in enumerate(manager.hardware_manager.gpu_info):
+                print(f"  GPU {i + 1}: {gpu['name']}")
+                if gpu["memory_total_gb"] is not None:
+                    print(f"     Memory Total: {gpu['memory_total_gb']:.2f} GB, Free: {gpu['memory_free_gb']:.2f} GB")
         else:
-            print("\nNo GPUs detected")
-    
+            print("\nNo GPU detected.")
     else:
         parser.print_help()
 
